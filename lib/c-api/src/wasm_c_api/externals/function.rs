@@ -228,6 +228,69 @@ pub unsafe extern "C" fn wasm_func_call(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn spirare_instance_func_call(
+    instance: &crate::wasm_c_api::instance::wasm_instance_t,
+    name: Option<core::ptr::NonNull<libc::c_char>>,
+    namelen: libc::c_int,
+    args: Option<&wasm_val_vec_t>,
+    results: &mut wasm_val_vec_t,
+) -> Option<Box<wasm_trap_t>> {
+    let name = core::slice::from_raw_parts_mut(
+            name?.cast::<u8>().as_ptr(),
+            namelen as usize)
+        .to_vec();
+    let name = String::from_utf8(name).ok()?;
+    let args = args?;
+    let func = instance.inner.exports.get_function(&name).ok()?;
+    let mut store = instance.store.clone();
+    let mut store_mut = store.store_mut();
+    let params = args
+        .as_slice()
+        .iter()
+        .cloned()
+        .map(TryInto::try_into)
+        .collect::<Result<Vec<Value>, _>>()
+        .expect("Arguments conversion failed");
+    
+    match func.call(&mut store_mut, &params) {
+        Ok(wasm_results) => {
+            for (slot, val) in results
+                .as_uninit_slice()
+                .iter_mut()
+                .zip(wasm_results.iter())
+            {
+                *slot = MaybeUninit::new(val.try_into().expect("Results conversion failed"));
+            }
+
+            None
+        }
+        Err(e) => Some(Box::new(e.into())),
+    }
+}
+
+// #[no_mangle]
+// pub unsafe extern "C" fn spirare_instance_exports_func(
+//     instance: &crate::wasm_c_api::instance::wasm_instance_t,
+//     name: Option<core::ptr::NonNull<libc::c_char>>,
+//     namelen: libc::c_int,
+// ) -> Option<&wasm_func_t> {
+//     let name = core::slice::from_raw_parts_mut(
+//             name?.cast::<u8>().as_ptr(),
+//             namelen as usize)
+//         .to_vec();
+//     let name = String::from_utf8(name).ok()?;
+//     let r#extern = instance.inner.exports.get_extern(&name)?;
+//     let func = wasm_func_t::try_from(
+//         &wasm_extern_t::new(
+//             instance.store.clone(),
+//             r#extern.clone(),
+//         )
+//     );
+//     func
+// }
+
+
+#[no_mangle]
 pub unsafe extern "C" fn wasm_func_param_arity(func: &wasm_func_t) -> usize {
     func.extern_
         .function()
